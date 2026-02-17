@@ -1,0 +1,44 @@
+=== Aspect Weaving Analysis Results ===
+
+Total functions: 7
+
+All Functions:
+  • public_function (Public)
+    Module: crate
+    Location: test_input.rs:5
+  • private_function (Private)
+    Module: crate
+    Location: test_input.rs:9
+  • async_function (Public)
+    Module: crate
+    Location: test_input.rs:13
+  • generic_function (Public)
+    Module: crate
+    Location: test_input.rs:17
+  • api::fetch_data (Public)
+    Module: crate::TypeNs
+    Location: test_input.rs:22
+  • api::process_data (Public)
+    Module: crate::TypeNs
+    Location: test_input.rs:26
+  • internal::helper_function (Private)
+    Module: crate::TypeNs
+    Location: test_input.rs:32
+
+Matched Functions:
+Total matches: 7
+
+  • public_function
+    Pointcut: execution(pub fn *(..))
+  • async_function
+    Pointcut: execution(pub fn *(..))
+  • generic_function
+    Pointcut: execution(pub fn *(..))
+  • api::fetch_data
+    Pointcut: execution(pub fn *(..))
+  • api::process_data
+    Pointcut: execution(pub fn *(..))
+  • api::fetch_data
+    Pointcut: within(api)
+  • api::process_data
+    Pointcut: within(api)

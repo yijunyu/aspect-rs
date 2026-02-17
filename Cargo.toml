@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "aspect-core",
+    "aspect-macros",
+    "aspect-runtime",
+    "aspect-std",
+    "aspect-examples",
+    "cargo-aspect",
+    "aspect-driver",
+    "aspect-rustc-driver",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["yijunyu"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yijunyu/aspect-rs"
+homepage = "https://yijunyu.github.io/aspect-rs/"
+documentation = "https://yijunyu.github.io/aspect-rs/"
+keywords = ["aop", "aspect", "cross-cutting", "logging", "aspect-oriented"]
+categories = ["development-tools", "rust-patterns"]
+
+[workspace.dependencies]
+aspect-core = { path = "./aspect-core", version = "0.1.0" }
+aspect-macros = { path = "./aspect-macros", version = "0.1.0" }
+aspect-runtime = { path = "./aspect-runtime", version = "0.1.0" }
+aspect-std = { path = "./aspect-std", version = "0.1.0" }
+aspect-driver = { path = "./aspect-driver", version = "0.1.0" }
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

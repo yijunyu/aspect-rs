@@ -1,0 +1,20 @@
+[package]
+name = "aspect-driver"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false  # Requires nightly Rust and rustc-dev components
+
+[dependencies]
+# aspect-driver uses rustc internal APIs which are available when:
+# 1. Using nightly Rust (see rust-toolchain.toml)
+# 2. rustc-dev component is installed
+# These are not regular crate dependencies but are linked at compile time
+
+[features]
+default = []

@@ -1,0 +1,23 @@
+[package]
+name = "aspect-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Core traits and types for aspect-oriented programming in Rust"
+readme = "../README.md"
+
+[dependencies]
+# Minimal dependencies - core abstractions only
+
+[dev-dependencies]
+proptest = "1.4"
+criterion = "0.5"
+
+[[bench]]
+name = "aspect_overhead"
+harness = false

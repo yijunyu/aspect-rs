@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            See CHANGELOG.md for details.
+          draft: false
+          prerelease: false
+
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish aspect-core
+        run: |
+          cd aspect-core
+          cargo publish --token ${{ secrets.CARGO_TOKEN }}
+        continue-on-error: false
+
+      - name: Wait for aspect-core to be available
+        run: sleep 30
+
+      - name: Publish aspect-macros
+        run: |
+          cd aspect-macros
+          cargo publish --token ${{ secrets.CARGO_TOKEN }}
+        continue-on-error: false
+
+      - name: Wait for aspect-macros to be available
+        run: sleep 30
+
+      - name: Publish aspect-runtime
+        run: |
+          cd aspect-runtime
+          cargo publish --token ${{ secrets.CARGO_TOKEN }}
+        continue-on-error: false

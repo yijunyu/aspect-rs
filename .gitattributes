@@ -1,0 +1,18 @@
+# Git attributes for proper language detection and diff display
+
+# Rust files
+*.rs linguist-language=Rust
+
+# Documentation
+*.md linguist-documentation
+
+# Configuration
+*.toml linguist-language=TOML
+*.yml linguist-language=YAML
+*.yaml linguist-language=YAML
+
+# Git settings
+* text=auto
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf

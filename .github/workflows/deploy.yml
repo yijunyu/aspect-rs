@@ -1,0 +1,35 @@
+# GitHub Actions workflow for automated deployment (future use)
+# Currently deployment is manual via scripts/deploy-aspect.sh
+
+name: Deploy to Public Repository
+
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      deploy_message:
+        description: 'Deployment commit message'
+        required: false
+        default: 'Update from private repository'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # This is a placeholder for future automation
+    # Currently deployment should be done manually
+    if: false  # Disabled - use manual deployment
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Note
+        run: |
+          echo "Automated deployment is not yet configured"
+          echo "Please use: ./scripts/deploy-aspect.sh"

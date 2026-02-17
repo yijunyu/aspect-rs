@@ -1,0 +1,40 @@
+[book]
+title = "aspect-rs: AOP Framework for Rust"
+authors = ["Yijun Yu"]
+language = "en"
+description = "Comprehensive guide to aspect-rs, a zero-cost compile-time AOP framework for Rust with automatic aspect weaving"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/yijunyu/aspect-rs"
+edit-url-template = "https://github.com/yijunyu/aspect-rs/edit/main/docs/book/{path}"
+additional-css = []
+additional-js = []
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
+
+[output.html.fold]
+enable = false
+level = 0
+
+[output.html.playground]
+editable = true
+copyable = true
+copy-js = true
+line-numbers = false
+runnable = true

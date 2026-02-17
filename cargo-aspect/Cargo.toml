@@ -1,0 +1,16 @@
+[package]
+name = "cargo-aspect"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Cargo subcommand for aspect-oriented programming with Rust"
+publish = false  # Not yet ready for publication
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
