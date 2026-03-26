@@ -8,6 +8,9 @@ members = [
     "cargo-aspect",
     "aspect-driver",
     "aspect-rustc-driver",
+    "aspect-agent",
+    "aspect-zeroclaw-examples",
+    "aspect-zeroclaw-harness",
 ]
 resolver = "2"
 
@@ -28,6 +31,7 @@ aspect-macros = { path = "./aspect-macros", version = "0.1.0" }
 aspect-runtime = { path = "./aspect-runtime", version = "0.1.0" }
 aspect-std = { path = "./aspect-std", version = "0.1.0" }
 aspect-driver = { path = "./aspect-driver", version = "0.1.0" }
+aspect-agent = { path = "./aspect-agent", version = "0.1.0" }
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 quote = "1.0"
 proc-macro2 = "1.0"

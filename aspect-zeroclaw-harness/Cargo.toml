@@ -1,0 +1,32 @@
+[package]
+name = "aspect-zeroclaw-harness"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Test harness measuring correctness, LOC savings, v1-v4 what-if analysis, and v5 integration for aspect-rs applied to ZeroClaw"
+
+[dependencies]
+aspect-core = { workspace = true }
+aspect-std = { workspace = true }
+aspect-agent = { path = "../aspect-agent" }
+walkdir = "2.4"
+syn = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+parking_lot = "0.12"
+regex = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3.8"
+
+[[bin]]
+name = "loc_counter"
+path = "src/bin/loc_counter.rs"
+
+[[bin]]
+name = "what_if"
+path = "src/bin/what_if.rs"

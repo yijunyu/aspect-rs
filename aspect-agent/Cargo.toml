@@ -1,0 +1,23 @@
+[package]
+name = "aspect-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords = ["aop", "aspect", "agent", "security", "ai"]
+categories = ["development-tools", "rust-patterns"]
+description = "Agent-specific aspects for agentic AI systems: tool scope, prompt injection defense, token budget, audit, human approval, and context management"
+
+[dependencies]
+aspect-core = { workspace = true }
+aspect-std = { workspace = true }
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
