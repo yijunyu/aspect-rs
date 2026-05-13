@@ -1,6 +1,21 @@
-//! Authorization aspect for role-based access control.
+//! Authorization aspects.
+//!
+//! This module provides two complementary authorization aspects:
+//!
+//! - [`AuthorizationAspect`] — role-based access control (RBAC). Given the
+//!   set of roles the caller holds, admit or deny based on a required-role
+//!   policy. The classical AspectJ / Spring Security shape.
+//!
+//! - [`AllowlistAspect`] — identity-based allowlisting. Given an identity
+//!   string (user ID, phone number, email, public key, etc.), admit if it
+//!   matches a configured set, with optional wildcard and normalization
+//!   hooks. This is the shape that recurs across messaging-channel
+//!   integrations: each channel has its own per-channel allowlist of who is
+//!   permitted to talk to the bot.
 
-use aspect_core::{Aspect, JoinPoint};
+use aspect_core::{Aspect, AspectError, JoinPoint, ProceedingJoinPoint};
+use parking_lot::RwLock;
+use std::any::Any;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -216,5 +231,358 @@ mod tests {
         });
 
         assert!(auth.check_authorization().is_ok());
+    }
+}
+// ──────────────────────────────────────────────────────────────────────────
+// AllowlistAspect
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Identity-based allowlist aspect.
+///
+/// Admits a call when the supplied identity string is present in a
+/// configured allowlist, optionally honoring a wildcard entry (`"*"`) and an
+/// optional normalization hook for identity comparison.
+///
+/// This shape recurs across messaging-channel integrations in real
+/// codebases: each channel maintains its own list of who is permitted to
+/// talk to the bot. The classical role-based [`AuthorizationAspect`] does
+/// not fit because there are no roles — there is a set of literal identity
+/// strings and a yes/no decision.
+///
+/// # Example
+///
+/// ```rust
+/// use aspect_std::AllowlistAspect;
+///
+/// let policy = AllowlistAspect::new(["user_a".to_string(), "user_b".to_string()]);
+/// assert!(policy.is_allowed("user_a"));
+/// assert!(!policy.is_allowed("intruder"));
+///
+/// // Wildcard.
+/// let open = AllowlistAspect::new(["*".to_string()]);
+/// assert!(open.is_allowed("anyone"));
+///
+/// // Empty list = deny everyone.
+/// let closed = AllowlistAspect::new(Vec::<String>::new());
+/// assert!(!closed.is_allowed("user_a"));
+/// ```
+///
+/// # Normalization
+///
+/// Some identity spaces require canonicalization before comparison: phone
+/// numbers (E.164), emails (case-insensitive), Telegram usernames
+/// (`@`-stripped), Matrix MXIDs (case-insensitive). Pass a normalization
+/// function via [`AllowlistAspect::with_normalizer`].
+///
+/// # Mutability
+///
+/// The allowlist is stored behind an `RwLock` and can be amended at runtime
+/// via [`AllowlistAspect::add`] / [`AllowlistAspect::set`]. This matches
+/// runtime-pairing flows where new identities are added without restart.
+#[derive(Clone)]
+pub struct AllowlistAspect {
+    inner: Arc<AllowlistInner>,
+}
+
+struct AllowlistInner {
+    entries: RwLock<Vec<String>>,
+    normalizer: Option<Box<dyn Fn(&str) -> String + Send + Sync>>,
+}
+
+impl AllowlistAspect {
+    /// Build an allowlist aspect from an initial set of entries.
+    ///
+    /// The wildcard entry `"*"` admits everyone. An empty list denies
+    /// everyone (fail-closed). Identity comparison is byte-equal by
+    /// default; see [`AllowlistAspect::with_normalizer`] for case-
+    /// insensitive or canonicalized comparison.
+    pub fn new<I, S>(entries: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            inner: Arc::new(AllowlistInner {
+                entries: RwLock::new(entries.into_iter().map(Into::into).collect()),
+                normalizer: None,
+            }),
+        }
+    }
+
+    /// Attach a normalization function applied to both the allowlist entries
+    /// and the queried identity before comparison.
+    ///
+    /// Consumes and returns `self`. The normalizer must be deterministic and
+    /// referentially transparent: calling it twice on the same input must
+    /// produce identical output.
+    pub fn with_normalizer<F>(mut self, normalizer: F) -> Self
+    where
+        F: Fn(&str) -> String + Send + Sync + 'static,
+    {
+        // We are the sole owner immediately after `new`, so `make_mut`
+        // returns the unique pointee. If a normalizer is added later
+        // (after clones exist), `make_mut` clones the inner — at which
+        // point the normalizer field on the old `Inner` is dropped
+        // (because the trait-object closure is not `Clone`); see the
+        // `Clone for AllowlistInner` impl below for the documented
+        // behavior.
+        let inner = Arc::make_mut(&mut self.inner);
+        inner.normalizer = Some(Box::new(normalizer));
+        self
+    }
+
+    /// Returns `true` if `identity` is admitted by the allowlist.
+    ///
+    /// Semantics: empty list ⇒ deny; `"*"` present ⇒ admit; otherwise
+    /// admit iff the (possibly normalized) identity equals some
+    /// (possibly normalized) entry.
+    pub fn is_allowed(&self, identity: &str) -> bool {
+        let entries = self.inner.entries.read();
+        if entries.is_empty() {
+            return false;
+        }
+        let norm = self.inner.normalizer.as_ref();
+        let needle = norm.map(|f| f(identity));
+        for entry in entries.iter() {
+            if entry == "*" {
+                return true;
+            }
+            match (&needle, norm) {
+                (Some(needle), Some(f)) => {
+                    if f(entry) == *needle {
+                        return true;
+                    }
+                }
+                _ => {
+                    if entry == identity {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Append `identity` to the allowlist if absent. No-op when `identity`
+    /// is already present (byte-equal, *not* normalized).
+    pub fn add(&self, identity: impl Into<String>) {
+        let identity = identity.into();
+        let mut entries = self.inner.entries.write();
+        if !entries.iter().any(|e| e == &identity) {
+            entries.push(identity);
+        }
+    }
+
+    /// Replace the entire allowlist atomically.
+    pub fn set<I, S>(&self, entries: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        *self.inner.entries.write() = entries.into_iter().map(Into::into).collect();
+    }
+
+    /// Snapshot the current allowlist as an owned `Vec`. Order-preserving
+    /// relative to insertion / construction.
+    pub fn snapshot(&self) -> Vec<String> {
+        self.inner.entries.read().clone()
+    }
+
+    /// Number of entries currently in the list (including the wildcard
+    /// entry if present).
+    pub fn len(&self) -> usize {
+        self.inner.entries.read().len()
+    }
+
+    /// Returns true when the allowlist is empty (i.e. denies everyone).
+    pub fn is_empty(&self) -> bool {
+        self.inner.entries.read().is_empty()
+    }
+}
+
+// Workaround: `Arc::make_mut` needs `Clone` on the pointee. We never call
+// it in practice — `with_normalizer` is only meant to be used immediately
+// after `new`, before any clones exist — so we never actually trigger the
+// clone path. Implement `Clone` defensively for the unlikely case.
+impl Clone for AllowlistInner {
+    fn clone(&self) -> Self {
+        Self {
+            entries: RwLock::new(self.entries.read().clone()),
+            // A `Fn` trait object is not `Clone`. If a caller insists on
+            // cloning an `AllowlistAspect` that already has a normalizer
+            // installed via `with_normalizer` after cloning, the
+            // normalizer is dropped. This is documented; the canonical
+            // use is to call `with_normalizer` immediately after `new`.
+            normalizer: None,
+        }
+    }
+}
+
+/// Per-call context bound to the most recent guarded join point. Set by
+/// the host before `proceed()` is invoked; cleared by `release`.
+#[derive(Clone, Debug)]
+pub struct AllowlistCall {
+    /// The identity being checked at this join point.
+    pub identity: String,
+}
+
+impl Aspect for AllowlistAspect {
+    fn before(&self, _ctx: &JoinPoint) {
+        // No-op. Denial happens in `around`, where we can short-circuit.
+    }
+
+    fn around(&self, pjp: ProceedingJoinPoint) -> Result<Box<dyn Any>, AspectError> {
+        // The around path is provided so the aspect can be applied via
+        // `#[aspect(...)]` weaving when the migration is ready to use that
+        // path. The current zeroclaw migration uses the direct
+        // `is_allowed(...)` query API instead and does not go through
+        // `around`; we keep the implementation honest by returning the
+        // proceed result unchanged here. A future macro-driven migration
+        // would extend `ProceedingJoinPoint` to carry the identity to
+        // check, at which point this path would call `is_allowed`.
+        pjp.proceed()
+    }
+}
+
+#[cfg(test)]
+mod allowlist_tests {
+    use super::*;
+
+    #[test]
+    fn empty_list_denies_everyone() {
+        let policy = AllowlistAspect::new(Vec::<String>::new());
+        assert!(!policy.is_allowed("alice"));
+        assert!(!policy.is_allowed(""));
+    }
+
+    #[test]
+    fn wildcard_admits_everyone() {
+        let policy = AllowlistAspect::new(["*".to_string()]);
+        assert!(policy.is_allowed("alice"));
+        assert!(policy.is_allowed("anyone"));
+        assert!(policy.is_allowed(""));
+    }
+
+    #[test]
+    fn specific_identity() {
+        let policy = AllowlistAspect::new(["alice".to_string(), "bob".to_string()]);
+        assert!(policy.is_allowed("alice"));
+        assert!(policy.is_allowed("bob"));
+        assert!(!policy.is_allowed("charlie"));
+    }
+
+    #[test]
+    fn wildcard_mixed_with_specific() {
+        // Matches existing zeroclaw behavior: wildcard wins regardless of
+        // position.
+        let policy = AllowlistAspect::new(["alice".to_string(), "*".to_string()]);
+        assert!(policy.is_allowed("alice"));
+        assert!(policy.is_allowed("charlie"));
+    }
+
+    #[test]
+    fn normalizer_case_insensitive() {
+        let policy = AllowlistAspect::new(["Alice@Example.com".to_string()])
+            .with_normalizer(|s| s.to_ascii_lowercase());
+        assert!(policy.is_allowed("alice@example.com"));
+        assert!(policy.is_allowed("ALICE@EXAMPLE.COM"));
+        assert!(!policy.is_allowed("bob@example.com"));
+    }
+
+    #[test]
+    fn normalizer_phone_strip() {
+        // Mirrors how zeroclaw's whatsapp_web normalizes E.164: strip
+        // everything but digits and the leading '+'.
+        let policy =
+            AllowlistAspect::new(["+1-555-0100".to_string()]).with_normalizer(|s| {
+                let mut out = String::new();
+                let mut chars = s.chars();
+                if let Some('+') = chars.clone().next() {
+                    out.push('+');
+                    chars.next();
+                }
+                for c in chars {
+                    if c.is_ascii_digit() {
+                        out.push(c);
+                    }
+                }
+                out
+            });
+        assert!(policy.is_allowed("+15550100"));
+        assert!(policy.is_allowed("+1 555 0100"));
+        assert!(!policy.is_allowed("+15550101"));
+    }
+
+    #[test]
+    fn add_appends_unique() {
+        let policy = AllowlistAspect::new(["alice".to_string()]);
+        policy.add("bob");
+        policy.add("bob"); // duplicate ignored
+        assert_eq!(policy.len(), 2);
+        assert!(policy.is_allowed("bob"));
+    }
+
+    #[test]
+    fn set_replaces_atomically() {
+        let policy = AllowlistAspect::new(["alice".to_string()]);
+        policy.set(["bob".to_string(), "carol".to_string()]);
+        assert!(!policy.is_allowed("alice"));
+        assert!(policy.is_allowed("bob"));
+        assert!(policy.is_allowed("carol"));
+        assert_eq!(policy.len(), 2);
+    }
+
+    #[test]
+    fn snapshot_returns_owned_copy() {
+        let policy = AllowlistAspect::new(["alice".to_string(), "bob".to_string()]);
+        let snap = policy.snapshot();
+        assert_eq!(snap, vec!["alice".to_string(), "bob".to_string()]);
+        // Mutating the policy does not affect the snapshot.
+        policy.add("carol");
+        assert_eq!(snap.len(), 2);
+    }
+
+    #[test]
+    fn clone_shares_underlying_list() {
+        let policy_a = AllowlistAspect::new(["alice".to_string()]);
+        let policy_b = policy_a.clone();
+        policy_b.add("bob");
+        // Both views see the addition — clones share `Arc<Inner>`.
+        assert!(policy_a.is_allowed("bob"));
+    }
+
+    /// Parity test: matches the exact semantics of zeroclaw's existing
+    /// archetype-A `is_user_allowed` shape (`allowed.iter().any(|u| u ==
+    /// "*" || u == identity)`). The aspect must match this Boolean
+    /// truth table for every (allowlist, identity) pair below, so the
+    /// migration is provably behavior-preserving.
+    #[test]
+    fn parity_with_zeroclaw_archetype_a() {
+        let cases: Vec<(Vec<&str>, &str, bool)> = vec![
+            (vec![], "alice", false),
+            (vec![], "", false),
+            (vec!["*"], "alice", true),
+            (vec!["*"], "", true),
+            (vec!["alice"], "alice", true),
+            (vec!["alice"], "bob", false),
+            (vec!["alice", "bob"], "bob", true),
+            (vec!["alice", "*"], "anyone", true),
+            (vec!["*", "alice"], "anyone", true),
+            (vec!["alice"], "ALICE", false), // case-sensitive by default
+            (vec!["alice"], "alice ", false), // whitespace-sensitive by default
+        ];
+        for (entries, identity, expected) in cases {
+            let policy = AllowlistAspect::new(entries.iter().map(|s| s.to_string()));
+            let baseline = entries.iter().any(|u| *u == "*" || *u == identity);
+            assert_eq!(
+                baseline, expected,
+                "baseline semantics drifted for entries={entries:?} identity={identity:?}"
+            );
+            assert_eq!(
+                policy.is_allowed(identity),
+                expected,
+                "AllowlistAspect mismatched zeroclaw archetype-A for entries={entries:?} identity={identity:?}"
+            );
+        }
     }
 }

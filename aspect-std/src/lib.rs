@@ -41,7 +41,7 @@ pub use caching::CachingAspect;
 pub use metrics::MetricsAspect;
 pub use ratelimit::RateLimitAspect;
 pub use circuitbreaker::{CircuitBreakerAspect, CircuitState};
-pub use authorization::{AuthorizationAspect, AuthMode};
+pub use authorization::{AllowlistAspect, AllowlistCall, AuthMode, AuthorizationAspect};
 pub use validation::{ValidationAspect, ValidationRule};
 
 /// Prelude module for convenient imports.
@@ -52,6 +52,6 @@ pub mod prelude {
     pub use crate::metrics::MetricsAspect;
     pub use crate::ratelimit::RateLimitAspect;
     pub use crate::circuitbreaker::{CircuitBreakerAspect, CircuitState};
-    pub use crate::authorization::{AuthorizationAspect, AuthMode};
+    pub use crate::authorization::{AllowlistAspect, AllowlistCall, AuthMode, AuthorizationAspect};
     pub use crate::validation::{ValidationAspect, ValidationRule};
 }
