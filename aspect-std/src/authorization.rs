@@ -287,6 +287,7 @@ pub struct AllowlistAspect {
 struct AllowlistInner {
     entries: RwLock<Vec<String>>,
     normalizer: Option<Box<dyn Fn(&str) -> String + Send + Sync>>,
+    matcher: Option<Box<dyn Fn(&str, &str) -> bool + Send + Sync>>,
 }
 
 impl AllowlistAspect {
@@ -305,6 +306,7 @@ impl AllowlistAspect {
             inner: Arc::new(AllowlistInner {
                 entries: RwLock::new(entries.into_iter().map(Into::into).collect()),
                 normalizer: None,
+                matcher: None,
             }),
         }
     }
@@ -315,6 +317,10 @@ impl AllowlistAspect {
     /// Consumes and returns `self`. The normalizer must be deterministic and
     /// referentially transparent: calling it twice on the same input must
     /// produce identical output.
+    ///
+    /// Mutually exclusive with [`AllowlistAspect::with_matcher`]: if a
+    /// matcher is installed, the normalizer is bypassed because the
+    /// matcher owns the entry-vs-identity comparison end-to-end.
     pub fn with_normalizer<F>(mut self, normalizer: F) -> Self
     where
         F: Fn(&str) -> String + Send + Sync + 'static,
@@ -331,6 +337,28 @@ impl AllowlistAspect {
         self
     }
 
+    /// Attach a custom match predicate `(entry, identity) -> bool` that
+    /// replaces the default byte-equal (or normalized-equal) comparison.
+    ///
+    /// Consumes and returns `self`. The wildcard `"*"` and empty-list
+    /// short-circuits still apply *before* the matcher runs — the matcher
+    /// is only consulted for non-`"*"` entries against a non-empty list.
+    /// The matcher must be referentially transparent.
+    ///
+    /// Use this when entries and identities are not directly comparable
+    /// — e.g. allowlist entries that describe a *class* of identity
+    /// (`"@example.com"` matches any user at that domain) rather than a
+    /// single literal one. When a matcher is set the normalizer is
+    /// bypassed; the matcher owns the comparison.
+    pub fn with_matcher<F>(mut self, matcher: F) -> Self
+    where
+        F: Fn(&str, &str) -> bool + Send + Sync + 'static,
+    {
+        let inner = Arc::make_mut(&mut self.inner);
+        inner.matcher = Some(Box::new(matcher));
+        self
+    }
+
     /// Returns `true` if `identity` is admitted by the allowlist.
     ///
     /// Semantics: empty list ⇒ deny; `"*"` present ⇒ admit; otherwise
@@ -339,6 +367,17 @@ impl AllowlistAspect {
     pub fn is_allowed(&self, identity: &str) -> bool {
         let entries = self.inner.entries.read();
         if entries.is_empty() {
+            return false;
+        }
+        if let Some(matcher) = self.inner.matcher.as_ref() {
+            for entry in entries.iter() {
+                if entry == "*" {
+                    return true;
+                }
+                if matcher(entry, identity) {
+                    return true;
+                }
+            }
             return false;
         }
         let norm = self.inner.normalizer.as_ref();
@@ -410,10 +449,12 @@ impl Clone for AllowlistInner {
             entries: RwLock::new(self.entries.read().clone()),
             // A `Fn` trait object is not `Clone`. If a caller insists on
             // cloning an `AllowlistAspect` that already has a normalizer
-            // installed via `with_normalizer` after cloning, the
-            // normalizer is dropped. This is documented; the canonical
-            // use is to call `with_normalizer` immediately after `new`.
+            // or matcher installed after cloning, those fields are
+            // dropped. This is documented; the canonical use is to call
+            // `with_normalizer` / `with_matcher` immediately after
+            // `new`, before any clones exist.
             normalizer: None,
+            matcher: None,
         }
     }
 }
@@ -584,5 +625,61 @@ mod allowlist_tests {
                 "AllowlistAspect mismatched zeroclaw archetype-A for entries={entries:?} identity={identity:?}"
             );
         }
+    }
+
+    /// The email/gmail_push shape: entries may be a full email
+    /// ("alice@example.com"), a domain with `@` prefix
+    /// ("@example.com"), or a bare domain ("example.com"). All
+    /// comparisons are ASCII-case-insensitive.
+    fn email_domain_or_full_match(entry: &str, email: &str) -> bool {
+        let email_lower = email.to_ascii_lowercase();
+        if let Some(domain) = entry.strip_prefix('@') {
+            email_lower.ends_with(&format!("@{}", domain.to_ascii_lowercase()))
+        } else if entry.contains('@') {
+            entry.eq_ignore_ascii_case(email)
+        } else {
+            email_lower.ends_with(&format!("@{}", entry.to_ascii_lowercase()))
+        }
+    }
+
+    #[test]
+    fn matcher_email_domain_or_full() {
+        let policy = AllowlistAspect::new([
+            "alice@example.com".to_string(),
+            "@allowed.com".to_string(),
+            "bare.com".to_string(),
+        ])
+        .with_matcher(email_domain_or_full_match);
+        assert!(policy.is_allowed("alice@example.com"));
+        assert!(policy.is_allowed("ALICE@Example.COM")); // case-insensitive full match
+        assert!(policy.is_allowed("anyone@allowed.com"));
+        assert!(policy.is_allowed("anyone@bare.com"));
+        assert!(!policy.is_allowed("bob@example.com")); // wrong local part, no domain rule
+        assert!(!policy.is_allowed("anyone@other.com"));
+    }
+
+    #[test]
+    fn matcher_respects_wildcard_and_empty_shortcircuits() {
+        // Empty list still denies even with a permissive matcher.
+        let empty =
+            AllowlistAspect::new(Vec::<String>::new()).with_matcher(|_e, _i| true);
+        assert!(!empty.is_allowed("anyone"));
+
+        // Wildcard still admits without ever calling the matcher.
+        let wild = AllowlistAspect::new(["*".to_string()])
+            .with_matcher(|_e, _i| panic!("matcher must not run when '*' present"));
+        assert!(wild.is_allowed("anyone"));
+    }
+
+    #[test]
+    fn matcher_takes_precedence_over_normalizer() {
+        // Normalizer would map both sides to lowercase, but the matcher
+        // owns the comparison and chooses to be strict-equal. The
+        // normalizer must be bypassed.
+        let policy = AllowlistAspect::new(["Alice".to_string()])
+            .with_normalizer(|s| s.to_ascii_lowercase())
+            .with_matcher(|e, i| e == i);
+        assert!(policy.is_allowed("Alice"));
+        assert!(!policy.is_allowed("alice"));
     }
 }
